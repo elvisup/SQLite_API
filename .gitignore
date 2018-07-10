@@ -1,0 +1,4 @@
+*.o
+*.a
+sqlite/sqlite-autoconf-3240000
+sqlite/sqlite-doc-3240000
