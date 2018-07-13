@@ -1,15 +1,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <dlfcn.h>
+#include <slog.h>
 #include <sqlite3.h>
+#include <hotdb.h>
 
-struct sqlite3_context {
+#define LIBHOTDB_VERSION 0x00000001
+
+typedef struct _sqlite3_context {
 	char *sql;
 	char *zErrMsg;
 	sqlite3* db;
 } sqlite3_ctx;
 
+#if 0
 static int search_flag = 0;
 static int callback_search(void *NotUsed, int argc, char **argv, char **azColName)
 {
@@ -136,14 +142,69 @@ int API_sqlite3_exec_delete_table_label(char *table, char *label, char *val)
 
 	return 0;
 }
+#endif
 
 void HotDB_Get_Version(void)
 {
-	printf("############################################\n");
-	printf("#### sqlite3_libversion       : [%s]\n", sqlite3_libversion());
-	printf("#### sqlite3_sourceid         : [%s]\n", sqlite3_sourceid());
-	printf("#### sqlite3_libversion_number: [%d]\n", sqlite3_libversion_number());
-	printf("############################################\n\n");
+	slog(LOG_INFO, "#### hotdb version    : [0x%08x]\n", LIBHOTDB_VERSION);
+	slog(LOG_INFO, "#### core libversion  : [%s]\n", sqlite3_libversion());
+	slog(LOG_INFO, "#### core sourceid    : [%s]\n", sqlite3_sourceid());
+	/*printf("#### core libversion_number: [%d]\n", sqlite3_libversion_number());*/
+}
+
+int HotDB_Create_DataBase(char *database_name)
+{
+	int rc;
+	sqlite3_ctx *ctx = NULL;
+	if (database_name == NULL) {
+		slog(LOG_ERR, "database name error!\n");
+		return HOTDB_DBNAME_ERR;
+	}
+
+	ctx = (sqlite3_ctx *)malloc(sizeof(sqlite3_ctx));
+	if (ctx == NULL) {
+		slog(LOG_ERR, "database [%s] malloc error!\n", database_name);
+		return HOTDB_DBMALLOC_ERR;
+	}
+
+	rc = sqlite3_open(database_name, &(ctx->db));
+	if(rc){
+		slog(LOG_ERR, "Opened [%s] database errror!\n", database_name);
+		return HOTDB_OPENDB_ERR;
+	}
+
+	/*slog(LOG_DBG, "%s:%d ctx: %p\n", __func__, __LINE__, ctx);*/
+	return (int)ctx;
+}
+
+int HotDB_Create_Table(int db_ctx, char *table, char *label_list)
+{
+	int rc;
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
+
+	if (label_list == NULL || table == NULL) {
+		slog(LOG_ERR, "label_list or  table is NULL\n");
+		return HOTDB_DBLL_ERR;
+	}
+
+	char sql_buf[1024] = {'\0'};
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+
+	sprintf(sql_buf, "CREATE TABLE %s (%s);", table, label_list);
+	//check sql cmd length
+	ctx->sql = sql_buf;
+
+	rc = sqlite3_exec(ctx->db, ctx->sql, NULL, NULL, &ctx->zErrMsg);
+	if( rc != SQLITE_OK ){
+		fprintf(stderr, "SQL error: %s\n", ctx->zErrMsg);
+		sqlite3_free(ctx->zErrMsg);
+		return HOTDB_CREATE_TABLE_ERR;
+	}
+
+	return 0;
 }
 
 #if 0

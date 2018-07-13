@@ -16,9 +16,12 @@ CFLAGS := -g -O2 -Wall -lpthread -lrt -ldl -lm
 LIBS :=  \
 	-L./sqlite/lib -lsqlite3
 
-INCLUDE := -I./sqlite/include
+INCLUDE := -I./sqlite/include \
+	   -I./src/inc \
+	   -I./include
 
-OBJS := ./src/hotdb.o
+OBJS := ./src/utils/slog.o \
+	./src/hotdb.o
 
 TARGET := libhotdb.a
 
@@ -39,4 +42,4 @@ demo:
 	strip demo
 
 clean:
-	rm -f $(TARGET) $(OBJS) *.db
+	rm -rf $(TARGET) $(OBJS) *.db demo

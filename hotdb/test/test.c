@@ -5,7 +5,24 @@
 
 int main()
 {
+	int ret = -1;
+	int db_context = -1;
+
 	HotDB_Get_Version();
+
+	db_context = HotDB_Create_DataBase("./MyDBDemo.db");
+	if (db_context < 0) {
+		printf("HotDB_Create_DataBase error: %d\n", db_context);
+		return -1;
+	}
+	printf("db_context: 0x%08x\n", db_context);
+
+	ret = HotDB_Create_Table(db_context, "ELVISTABLE", "NAME TEXT, AGE INT");
+	if (ret < 0) {
+		printf("create table error! %d\n", ret);
+		return -1;
+	}
+
 	return 0;
 }
 
