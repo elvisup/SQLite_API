@@ -4,145 +4,18 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <slog.h>
+#include <core.h>
 #include <sqlite3.h>
 #include <hotdb.h>
 
-#define LIBHOTDB_VERSION 0x00000001
+/*#define TIME_DEBUG*/
 
 typedef struct _sqlite3_context {
+	char name[32];
 	char *sql;
 	char *zErrMsg;
 	sqlite3* db;
 } sqlite3_ctx;
-
-#if 0
-static int search_flag = 0;
-static int callback_search(void *NotUsed, int argc, char **argv, char **azColName)
-{
-	int i;
-	char *str = (char *)NotUsed;
-	for(i=0; i<argc; i++){
-		if ((search_flag == 0) || !strcmp(str, argv[i])) {
-			printf("Search [%s] OK!\n", str);
-			search_flag = 1;
-		}
-	}
-	return 0;
-}
-
-int API_sqlite3_exec_search(char *id, char *table, void *data)
-{
-	int rc;
-	char buffer[128] = {0};
-	sprintf(buffer, "SELECT %s from %s", id, table);
-	sqlite3_ctx.sql = buffer;
-
-	rc = sqlite3_exec(sqlite3_ctx.db, sqlite3_ctx.sql, callback_search, data, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return search_flag;
-}
-
-void API_sqlite3_exec_cls_search_status(void)
-{
-	search_flag = 0;
-}
-
-static int callback_print(void *NotUsed, int argc, char **argv, char **azColName)
-{
-	int i;
-	for(i=0; i<argc; i++){
-		printf("%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
-	}
-	printf("\n");
-	return 0;
-}
-
-int API_sqlite3_exec(char *sql, void *data)
-{
-	int rc;
-	rc = sqlite3_exec(sqlite3_ctx.db, sql, callback_print, data, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return 0;
-}
-
-int API_sqlite3_exec_list_table(char *table)
-{
-	int rc;
-	char buffer[128] = {0};
-	sprintf(buffer, "SELECT * from %s", table);
-	sqlite3_ctx.sql = buffer;
-
-	printf(">>>>>>> List Table [%s]\n", table);
-	rc = sqlite3_exec(sqlite3_ctx.db, sqlite3_ctx.sql, callback_print, NULL, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return 0;
-}
-
-int API_sqlite3_exec_insrt_to_table(char *data)
-{
-	int rc;
-	sqlite3_ctx.sql = data;
-
-	rc = sqlite3_exec(sqlite3_ctx.db, sqlite3_ctx.sql, callback_print, NULL, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return 0;
-}
-
-int API_sqlite3_exec_table_update(char *table, char *modify_label, char *modify_val, char *tgt_label, char *tgt_val)
-{
-	int rc;
-	char buffer[128] = {0};
-	sprintf(buffer, "UPDATE %s set %s = '%s' where %s=%s", \
-			table, modify_label, modify_val, tgt_label, tgt_val);
-	sqlite3_ctx.sql = buffer;
-
-	rc = sqlite3_exec(sqlite3_ctx.db, sqlite3_ctx.sql, callback_print, NULL, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return 0;
-}
-
-int API_sqlite3_exec_delete_table_label(char *table, char *label, char *val)
-{
-	int rc;
-	char buffer[128] = {0};
-	sprintf(buffer, "DELETE from %s where %s=%s", table, label, val);
-	sqlite3_ctx.sql = buffer;
-
-	rc = sqlite3_exec(sqlite3_ctx.db, sqlite3_ctx.sql, callback_print, NULL, &sqlite3_ctx.zErrMsg);
-	if( rc != SQLITE_OK ){
-		fprintf(stderr, "SQL error: %s\n", sqlite3_ctx.zErrMsg);
-		sqlite3_free(sqlite3_ctx.zErrMsg);
-		return -1;
-	}
-
-	return 0;
-}
-#endif
 
 void HotDB_Get_Version(void)
 {
@@ -167,13 +40,14 @@ int HotDB_Create_DataBase(char *database_name)
 		return HOTDB_DBMALLOC_ERR;
 	}
 
-	rc = sqlite3_open(database_name, &(ctx->db));
+	rc = sqlite3_open_v2(database_name, &(ctx->db), SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_SHAREDCACHE, NULL);
 	if(rc){
-		slog(LOG_ERR, "Opened [%s] database errror!\n", database_name);
+		slog(LOG_ERR, "Opened [%s] database errror!, rc: %d\n", database_name, rc);
 		return HOTDB_OPENDB_ERR;
 	}
 
-	/*slog(LOG_DBG, "%s:%d ctx: %p\n", __func__, __LINE__, ctx);*/
+	memcpy(ctx->name, database_name, 32);
+
 	return (int)ctx;
 }
 
@@ -190,93 +64,237 @@ int HotDB_Create_Table(int db_ctx, char *table, char *label_list)
 		return HOTDB_DBLL_ERR;
 	}
 
-	char sql_buf[1024] = {'\0'};
+	char sql_buf[SQL_BUF_MAX_SIZE] = {'\0'};
 	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
 
-	sprintf(sql_buf, "CREATE TABLE %s (%s);", table, label_list);
-	//check sql cmd length
+	sprintf(sql_buf, "%s %s (%s);", db_sqlstr[CREATE].sql, table, label_list);
+	ctx->sql = sql_buf;
+
+	rc = sqlite3_exec(ctx->db, ctx->sql, NULL, NULL, &ctx->zErrMsg);
+	if( rc != SQLITE_OK ){
+		if( rc == 1 ){
+			/* table already exists */
+			slog(LOG_INFO, "database [%s]: %s\n", ctx->name, ctx->zErrMsg);
+		} else {
+			fprintf(stderr, "SQL error: %s, rc: %d\n", ctx->zErrMsg, rc);
+			sqlite3_free(ctx->zErrMsg);
+			return HOTDB_CREATE_TABLE_ERR;
+		}
+	}
+
+	return 0;
+}
+
+int HotDB_Insert_To_Table(int db_ctx, char *table, char *label_list, char *data, unsigned int data_size)
+{
+	int rc;
+	unsigned int sql_prefix_len = 0;
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
+
+	if (label_list == NULL || table == NULL) {
+		slog(LOG_ERR, "label_list or  table is NULL\n");
+		return HOTDB_DBLL_ERR;
+	}
+
+	char sql_buf[SQL_BUF_MAX_SIZE] = {'\0'};
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+
+	sprintf(sql_buf, "%s %s (%s) VALUES (", db_sqlstr[INSERT].sql, table, label_list);
+	sql_prefix_len = strlen(sql_buf);
+	memcpy(sql_buf+sql_prefix_len, data, data_size);
+	memcpy(sql_buf+sql_prefix_len + data_size, ");", strlen(");"));
+
 	ctx->sql = sql_buf;
 
 	rc = sqlite3_exec(ctx->db, ctx->sql, NULL, NULL, &ctx->zErrMsg);
 	if( rc != SQLITE_OK ){
 		fprintf(stderr, "SQL error: %s\n", ctx->zErrMsg);
 		sqlite3_free(ctx->zErrMsg);
-		return HOTDB_CREATE_TABLE_ERR;
+		return HOTDB_INSERT_TABLE_ERR;
 	}
 
 	return 0;
 }
 
-#if 0
-int main()
+int HotDB_Insert_Blob_To_Table(int db_ctx, char *table, char *label_list, char *data, unsigned int data_size, char *blob, unsigned int blob_size)
 {
 	int rc;
+	unsigned int sql_prefix_len = 0;
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
 
-	printf("############################################\n");
-	printf("#### sqlite3_libversion       : [%s]\n", sqlite3_libversion());
-	printf("#### sqlite3_sourceid         : [%s]\n", sqlite3_sourceid());
-	printf("#### sqlite3_libversion_number: [%d]\n", sqlite3_libversion_number());
-	printf("############################################\n\n");
+	if (label_list == NULL || table == NULL) {
+		slog(LOG_ERR, "label_list or  table is NULL\n");
+		return HOTDB_DBLL_ERR;
+	}
 
-	rc = sqlite3_open("fr_record.db",&sqlite3_ctx.db);
-	if(rc){
-		fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(sqlite3_ctx.db));
+	char sql_buf[SQL_BUF_MAX_SIZE] = {'\0'};
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+
+	sprintf(sql_buf, "%s %s (%s) VALUES (", db_sqlstr[INSERT].sql, table, label_list);
+	sql_prefix_len = strlen(sql_buf);
+	memcpy(sql_buf+sql_prefix_len, data, data_size);
+	memcpy(sql_buf+sql_prefix_len + data_size, ");", strlen(");"));
+
+	ctx->sql = sql_buf;
+
+	sqlite3_stmt *stat = NULL;
+	const char *tail = NULL;
+	rc = sqlite3_prepare(ctx->db, ctx->sql, strlen(sql_buf), &stat, &tail);
+	if (rc != SQLITE_OK) {
+		slog(LOG_ERR, "%s: sqlite3_prepare error, rc: %d\n", __func__, rc);
+	}
+
+	rc = sqlite3_bind_blob(stat, 1, blob, blob_size, SQLITE_STATIC);
+	if (rc != SQLITE_OK) {
+		slog(LOG_ERR, "sqlite3_bind_blob error, rc: %d\n", rc);
+	}
+	rc = sqlite3_step(stat);
+	if (rc != SQLITE_DONE) {
+		slog(LOG_ERR, "sqlite3_step error, rc: %d\n", rc);
 		return -1;
-	}else{
-		fprintf(stderr, "Opened database successfully\n");
 	}
 
-	/* Create Table */
-	sqlite3_ctx.sql = "CREATE TABLE COMPANY("  \
-	       "PATH           TEXT," \
-	       "NAME           TEXT," \
-	       "TIMES          INT," \
-	       "SEX            TEXT," \
-	       "ID             INT," \
-	       "SCORE          REAL );";
-	rc = API_sqlite3_exec(sqlite3_ctx.sql, NULL);
-
-	/* Insert */
-	sqlite3_ctx.sql = \
-	       "INSERT INTO COMPANY (PATH,NAME,TIMES,SEX,ID,SCORE) "  \
-	       "VALUES ('2018-05-08-15-16-33-00-19-26-097-097.jpeg', 'Paul', 1, 'Unkown', 100, 98.02 ); " \
-	       "INSERT INTO COMPANY (PATH,NAME,TIMES,SEX,ID,SCORE)" \
-	       "VALUES ('2018-05-08-15-16-34-00-19-26-097-097.jpeg', 'Lili', 1, 'Unkown', 101, 97.52 ); " \
-	       "INSERT INTO COMPANY (PATH,NAME,TIMES,SEX,ID,SCORE)" \
-	       "VALUES ('2018-05-08-15-16-33-00-19-28-007-090.jpeg', 'Elvis', 1, 'Unkown', 102, 100.00 );";
-	rc = API_sqlite3_exec(sqlite3_ctx.sql, NULL);
-
-	/* list table */
-	rc = API_sqlite3_exec_list_table("COMPANY");
-
-	/* search */
-	char *uid = "100";
-	rc = API_sqlite3_exec_search("ID", "COMPANY", uid);
-	if (rc <= 0) {
-		printf("API_sqlite3_exec_search error\n");
-	} else {
-		/*printf("API_sqlite3_exec_search OK\n");*/
-	}
-	API_sqlite3_exec_cls_search_status();
-
-	/* Delete */
-	rc = API_sqlite3_exec_delete_table_label("COMPANY", "ID", "100");
-
-	/* Insert */
-	char *insert_data = "INSERT INTO COMPANY (PATH,NAME,TIMES,SEX,ID,SCORE) "  \
-	       "VALUES ('2018-05-08-16-10-13-00-17-20-003-091.jpeg', 'Haha00', 1, 'Unkown', 103, 99.09 );";
-	rc = API_sqlite3_exec_insrt_to_table(insert_data);
-
-	rc = API_sqlite3_exec_list_table("COMPANY");
-
-	/* Update */
-	API_sqlite3_exec_table_update("COMPANY", "NAME", "Hwang", "ID", "103");
-
-	/* list table */
-	rc = API_sqlite3_exec_list_table("COMPANY");
-
-	sqlite3_close(sqlite3_ctx.db);
+	sqlite3_finalize(stat);
 
 	return 0;
 }
+
+int HotDB_Get_Blob_From_Table(int db_ctx, char *table, char *what, char *condition, char *blob, unsigned int *blob_size)
+{
+	int rc;
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
+
+	if (table == NULL) {
+		slog(LOG_ERR, "label_list or  table is NULL\n");
+		return HOTDB_DBLL_ERR;
+	}
+
+	char sql_buf[SQL_BUF_MAX_SIZE] = {'\0'};
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+
+	/*select feature from table where feature_id=0*/
+	sprintf(sql_buf, "%s %s from %s where %s;", db_sqlstr[SELECT].sql, what, table, condition);
+	/*printf("%s -> [%s]\n", __func__, sql_buf);*/
+
+	ctx->sql = sql_buf;
+
+#ifdef TIME_DEBUG
+	struct timeval start, end;
+	unsigned long long diff = 0;
+	gettimeofday(&start, NULL);
 #endif
+	sqlite3_stmt *stat = NULL;
+	const char *tail = NULL;
+	rc = sqlite3_prepare(ctx->db, ctx->sql, strlen(sql_buf), &stat, &tail);
+	if (rc != SQLITE_OK) {
+		slog(LOG_ERR, "%s: sqlite3_prepare error, rc: %d\n", __func__, rc);
+	}
+
+	rc = sqlite3_step(stat);
+	if ((rc != SQLITE_ROW) && (rc != SQLITE_DONE)) {
+		slog(LOG_ERR, "sqlite3_step error, rc: %d\n", rc);
+		return -1;
+	}
+
+	const void *blob_data = sqlite3_column_blob(stat, 0);
+	*blob_size = sqlite3_column_bytes(stat, 0);
+
+#ifdef TIME_DEBUG
+	gettimeofday(&end, NULL);
+	diff += ((int64_t)end.tv_sec*1000*1000 + end.tv_usec) - ((int64_t)start.tv_sec*1000*1000 + start.tv_usec);
+	slog(LOG_DBG, "get blob data time: %d\n", diff);
+#endif
+
+	/*printf("blob_size: %d\n", *blob_size);*/
+	memcpy(blob, blob_data, *blob_size);
+	sqlite3_finalize(stat);
+
+	return rc;
+}
+
+int HotDB_Prepare(int db_ctx, char *table, char *what, char *condition, int *p_handle)
+{
+	int rc;
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
+
+	if (table == NULL) {
+		slog(LOG_ERR, "label_list or  table is NULL\n");
+		return HOTDB_DBLL_ERR;
+	}
+
+	char sql_buf[SQL_BUF_MAX_SIZE] = {'\0'};
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+
+	sprintf(sql_buf, "%s %s from %s where %s;", db_sqlstr[SELECT].sql, what, table, condition);
+
+	ctx->sql = sql_buf;
+
+	sqlite3_stmt *stat = NULL;
+	const char *tail = NULL;
+	rc = sqlite3_prepare(ctx->db, ctx->sql, strlen(sql_buf), &stat, &tail);
+	if (rc != SQLITE_OK) {
+		slog(LOG_ERR, "%s: sqlite3_prepare error, rc: %d\n", __func__, rc);
+	}
+
+	*p_handle = (int)stat;
+
+	return rc;
+}
+
+int HotDB_Get_Blob_Data_Quick(int p_handle, unsigned int id, char *blob, unsigned int *blob_size)
+{
+	int rc;
+	if (p_handle <= 0) {
+		slog(LOG_ERR, "p_handle [%d] invalid!\n", p_handle);
+		return HOTDB_HDINVALID_ERR;
+	}
+
+	sqlite3_stmt *stat = (sqlite3_stmt *)p_handle;
+
+	sqlite3_bind_int(stat, 1, id);
+	rc = sqlite3_step(stat);
+	if ((rc != SQLITE_ROW) && (rc != SQLITE_DONE)) {
+		slog(LOG_ERR, "sqlite3_step error, rc: %d\n", rc);
+		return -1;
+	}
+
+	const void *blob_data = sqlite3_column_blob(stat, 0);
+	*blob_size = sqlite3_column_bytes(stat, 0);
+
+	memcpy(blob, blob_data, *blob_size);
+
+	sqlite3_reset(stat);
+
+	return rc;
+}
+
+void HotDB_Deprepare(int p_handle)
+{
+	sqlite3_finalize((sqlite3_stmt *)p_handle);
+}
+
+int HotDB_Close_DataBase(int db_ctx)
+{
+	if (db_ctx <= 0) {
+		slog(LOG_ERR, "database ctx [%d] invalid!\n", db_ctx);
+		return HOTDB_DBINVALID_ERR;
+	}
+
+	sqlite3_ctx *ctx = (sqlite3_ctx *)db_ctx;
+	sqlite3_close(ctx->db);
+
+	return 0;
+}
+

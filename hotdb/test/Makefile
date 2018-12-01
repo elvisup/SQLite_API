@@ -10,20 +10,18 @@ CC := $(CROSS_COMPILE)gcc
 CPP := $(CROSS_COMPILE)g++
 LD := $(CROSS_COMPILE)ld
 AR := $(CROSS_COMPILE)ar
+STRIP := $(CROSS_COMPILE)strip
 
 CFLAGS := -g -O2 -Wall -lpthread -lrt -ldl -lm
 
 LIBS :=  \
-	-L./sqlite/lib -lsqlite3
+	-L../ -lhotdb
 
-INCLUDE := -I./sqlite/include \
-	   -I./src/inc \
-	   -I./include
+INCLUDE := -I../include
 
-OBJS := ./src/utils/slog.o \
-	./src/hotdb.o
+OBJS := ./hotdb_demo.o
 
-TARGET := libhotdb.a
+TARGET := hotdb_demo
 
 All: $(TARGET)
 
@@ -34,12 +32,8 @@ All: $(TARGET)
 	$(CPP) $(INCLUDE) $(LIBS) -o $@ -c $^
 
 $(TARGET): $(OBJS)
-	$(LD) -EL -r -Bstatic $^ $(LIBS) -o $@
-	#strip $(TARGET)
-
-demo:
-	$(CC) ./test/test.c -o demo -L./ -lhotdb -I./include $(CFLAGS)
-	strip demo
+	$(CPP) $(OBJS) -o $@ $(INCLUDES) $(LIBS) $(CFLAGS)
+	$(STRIP) $(TARGET)
 
 clean:
 	rm -rf $(TARGET) $(OBJS) *.db demo

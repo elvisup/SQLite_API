@@ -1,8 +1,6 @@
-# SQLite API
-SQLite API封装
+#HotDB Usage
 
-## 编译
-在当前目录执行build.sh编译出sqlite库
+1. build sqlite3 library
 ```sh
 ./build.sh
 ```

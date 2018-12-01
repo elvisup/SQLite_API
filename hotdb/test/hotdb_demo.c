@@ -1,25 +1,172 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
+#include <time.h>
 #include <hotdb.h>
+
+#define TABLE_ELVIS      0
+#define TABLE_BLOB       1
+
+#define DB_DATA_CONFIRM  0
+
+struct db_status {
+	int db_ctx;
+	char *db_name;
+	char *table;
+	char *table_mumber;
+	char *table_label;
+};
+
+struct db_status gdb_sts[] = {
+	[TABLE_ELVIS] = {
+		.db_ctx = -1,
+		.db_name = "MyDBDemo.db",
+		.table = "ElvisTable",
+		.table_mumber = "name text, age int",
+		.table_label  = "name, age",
+	},
+	[TABLE_BLOB]  = {
+		.db_ctx = -1,
+		.db_name = "MyDBDemo.db",
+		.table = "BlobTable",
+		.table_mumber = "feature_id integer primary key, idx int, feature blob",
+		.table_label  = "feature_id, idx, feature",
+	},
+};
 
 int main()
 {
 	int ret = -1;
+	int i = 0, k = 0;
 	int db_context = -1;
 
 	HotDB_Get_Version();
 
-	db_context = HotDB_Create_DataBase("./MyDBDemo.db");
-	if (db_context < 0) {
-		printf("HotDB_Create_DataBase error: %d\n", db_context);
+	gdb_sts[TABLE_ELVIS].db_ctx = HotDB_Create_DataBase(gdb_sts[TABLE_ELVIS].db_name);
+	if (gdb_sts[TABLE_ELVIS].db_ctx < 0) {
+		printf("HotDB_Create_DataBase error: %d\n", gdb_sts[TABLE_ELVIS].db_ctx);
 		return -1;
 	}
-	printf("db_context: 0x%08x\n", db_context);
+	/*printf("db_ctx: 0x%08x\n", gdb_sts[TABLE_ELVIS].db_ctx);*/
 
-	ret = HotDB_Create_Table(db_context, "ELVISTABLE", "NAME TEXT, AGE INT");
+	gdb_sts[TABLE_BLOB].db_ctx = HotDB_Create_DataBase(gdb_sts[TABLE_BLOB].db_name);
+	if (gdb_sts[TABLE_BLOB].db_ctx < 0) {
+		printf("HotDB_Create_DataBase error: %d\n", gdb_sts[TABLE_BLOB].db_ctx);
+		return -1;
+	}
+	/*printf("db_ctx: 0x%08x\n", gdb_sts[TABLE_ELVIS].db_ctx);*/
+
+	ret = HotDB_Create_Table(gdb_sts[TABLE_ELVIS].db_ctx, gdb_sts[TABLE_ELVIS].table, gdb_sts[TABLE_ELVIS].table_mumber);
 	if (ret < 0) {
 		printf("create table error! %d\n", ret);
+		return -1;
+	}
+
+	ret = HotDB_Create_Table(gdb_sts[TABLE_BLOB].db_ctx, gdb_sts[TABLE_BLOB].table, gdb_sts[TABLE_BLOB].table_mumber);
+	if (ret < 0) {
+		printf("create table error! %d\n", ret);
+		return -1;
+	}
+
+	srand((unsigned)time(NULL));
+
+	struct timeval start, end;
+	unsigned long long diff = 0;
+	for (k = 0; k < 1000; k++) {
+		char insert_buf[128] = {0};
+		sprintf(insert_buf, "'%s%d', %d", "huanwang", k, k);
+		ret = HotDB_Insert_To_Table(gdb_sts[TABLE_ELVIS].db_ctx, gdb_sts[TABLE_ELVIS].table, gdb_sts[TABLE_ELVIS].table_label, insert_buf, strlen(insert_buf));
+		if (ret < 0) {
+			printf("insert table error! %d\n", ret);
+			return -1;
+		}
+
+		char insert_blobbuf[128] = {0};
+		sprintf(insert_blobbuf, "%d, %d, %s", k, k+100, "?");
+		char blobbuf[1024] = {0};
+		for (i = 0; i < 1024; i++) {
+			blobbuf[i] = rand() % 128;
+		}
+		gettimeofday(&start, NULL);
+		ret = HotDB_Insert_Blob_To_Table(gdb_sts[TABLE_BLOB].db_ctx, gdb_sts[TABLE_BLOB].table, gdb_sts[TABLE_BLOB].table_label, \
+				                 insert_blobbuf, strlen(insert_blobbuf), blobbuf, 1024);
+		if (ret < 0) {
+			printf("insert blob table error! %d\n", ret);
+			return -1;
+		}
+		gettimeofday(&end, NULL);
+		diff += ((int64_t)end.tv_sec*1000*1000 + end.tv_usec) - ((int64_t)start.tv_sec*1000*1000 + start.tv_usec);
+	}
+
+	printf("insert %d 1KB blob data total time: %lld us, average time: %d us\n", k, diff, diff / k);
+
+	diff = 0;
+	char get_blob_data[1024] = {'\0'};
+	char condition_buf[1024] = {'\0'};
+	int get_blob_size, idx = 0;
+#if DB_DATA_CONFIRM
+	int j = 0;
+	printf("\n");
+	printf("+-----------------------------+\n");
+	printf("| idx  d0 d1 d2 d3 d4 d5 d6 d7|\n");
+	printf("+-----------------------------|\n");
+#endif
+	int p_handler_c;
+	ret = HotDB_Prepare(gdb_sts[TABLE_BLOB].db_ctx, gdb_sts[TABLE_BLOB].table, "feature", "feature_id=?", &p_handler_c);
+	if (ret < 0) {
+		printf("HotDB_Prepare error! %d\n", ret);
+		return -1;
+	}
+	do {
+#if 0
+		sprintf(condition_buf, "feature_id=%d", idx);
+		gettimeofday(&start, NULL);
+		ret = HotDB_Get_Blob_From_Table(gdb_sts[TABLE_BLOB].db_ctx, gdb_sts[TABLE_BLOB].table, "feature", condition_buf, get_blob_data, &get_blob_size);
+		if (ret < 0) {
+			printf("HotDB_Get_Blob_From_Table error! %d\n", ret);
+			return -1;
+		}
+		gettimeofday(&end, NULL);
+#else
+		gettimeofday(&start, NULL);
+		ret = HotDB_Get_Blob_Data_Quick(p_handler_c, idx, get_blob_data, &get_blob_size);
+		if ((ret != HOTDB_BLOB_DATA_STATUS_RAW) && (ret != HOTDB_BLOB_DATA_STATUS_DONE)) {
+			printf("HotDB_Get_Blob_Data_Quick error! [%d]\n", ret);
+			break;
+		}
+		gettimeofday(&end, NULL);
+#endif
+		diff += ((int64_t)end.tv_sec*1000*1000 + end.tv_usec) - ((int64_t)start.tv_sec*1000*1000 + start.tv_usec);
+#if DB_DATA_CONFIRM
+		if (idx < 20) {
+			printf("|%04d: ", idx);
+			for (j = 0; j < 8; j++) {
+				if (j == 7) printf("%02x", get_blob_data[j]);
+				else printf("%02x ", get_blob_data[j]);
+			}
+			printf("|\n");
+		}
+#endif
+		idx++;
+	} while(!((ret < 0 ) || (ret == HOTDB_BLOB_DATA_STATUS_DONE)));
+	HotDB_Deprepare(p_handler_c);
+#if DB_DATA_CONFIRM
+	printf("+-----------------------------+\n\n");
+#endif
+	printf("get %d 1KB blob data total time: %lld us, average time: %d us\n", idx - 1, diff, diff / (idx - 1));
+
+	ret = HotDB_Close_DataBase(gdb_sts[TABLE_ELVIS].db_ctx);
+	if (ret < 0) {
+		printf("close table error! %d\n", ret);
+		return -1;
+	}
+
+	ret = HotDB_Close_DataBase(gdb_sts[TABLE_BLOB].db_ctx);
+	if (ret < 0) {
+		printf("close table error! %d\n", ret);
 		return -1;
 	}
 
